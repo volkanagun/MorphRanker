@@ -1,8 +1,6 @@
 package morphology.morph
 
 import morphology.data.Params
-import nn.embeddings.EmbedParams
-import utils.FreqWordTokenizer
 
 import java.io.{File, FileInputStream, FileOutputStream, ObjectInputStream, ObjectOutputStream}
 import java.util.regex.Pattern
@@ -11,7 +9,7 @@ import scala.io.Source
 import scala.util.Random
 import scala.util.control.Breaks
 
-class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") extends Serializable {
+class Tokenizer(val filename: String = "/resources/binary/dictionary.bin") extends Serializable {
 
   val binFilename = new File("").getAbsoluteFile().getAbsolutePath + filename
   val regex1 = "([abcçdefgğhıijklmnoöprsştuüvyzwqABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZQWX\\p{L}]+)"
@@ -24,7 +22,7 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
   var frequency = Map[String, Double]()
   val rnd = new Random()
 
-  def freqConstruct(filename: String): PTBTokenizer = {
+  def freqConstruct(filename: String): Tokenizer = {
 
     Source.fromFile(filename).getLines().foreach(sentence => {
       val tokens = standardTokenizer(sentence).filter(item => item.matches(regex1))
@@ -54,7 +52,7 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
   }
 
 
-  def freqNGramConstruct(filename: String, rsize: Int = 100000): PTBTokenizer = {
+  def freqNGramConstruct(filename: String, rsize: Int = 100000): Tokenizer = {
     val rndSet = Range(0, rsize).map(_ => rnd.nextInt(100000000)).toSet
     var index = 0
     var count = 0
@@ -102,7 +100,7 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
     this
   }
 
-  def save(): PTBTokenizer = {
+  def save(): Tokenizer = {
     val outputStream = new ObjectOutputStream(new FileOutputStream(binFilename))
     val array = frequency.toArray
     outputStream.writeInt(array.size)
@@ -116,7 +114,7 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
     this
   }
 
-  def load(): PTBTokenizer = {
+  def load(): Tokenizer = {
     if (new File(binFilename).exists()) {
       val inputStream = new ObjectInputStream(new FileInputStream(binFilename))
       val size = inputStream.readInt()
@@ -137,7 +135,7 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
     }
   }
 
-  def merge(freqWordTokenizer: PTBTokenizer): PTBTokenizer = {
+  def merge(freqWordTokenizer: Tokenizer): Tokenizer = {
     freqWordTokenizer.frequency.foreach { case (item, value) => {
       frequency = frequency.updated(item, frequency.getOrElse(item, 0d) + value)
     }
@@ -237,8 +235,8 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
 
   def standardTokenizer(sentence: String, start: Int): Option[(String, Int, Int)] = {
 
-    val res = patternArray.par.flatMap(p => standardTokenizer(sentence, p, start)).toArray.sortBy(tuple => tuple._3 - tuple._2)
-      .reverse
+    val res = patternArray.flatMap(p => standardTokenizer(sentence, p, start)).sortBy(tuple => tuple._2 + 1d/(tuple._3 - tuple._2))
+
     if (res.isEmpty) None
     else Some(res.head)
 
@@ -295,20 +293,19 @@ class PTBTokenizer(val filename: String = "/resources/binary/dictionary.bin") ex
 
 }
 
-object PTBTokenizer {
+object Tokenizer {
   val params = new Params()
 
   def construct(): Unit = {
-    val range = Range(0, params)
+    val range = Range(0, params.oneMillion)
     range.toArray.sliding(8, 8).foreach { arr => {
 
       val result = arr.toList.par.map(i => {
-        val tokenizer = new PTBTokenizer()
+        val tokenizer = new Tokenizer()
         tokenizer.load()
-        tokenizer.freqNGramConstruct(params.sentenceFilename, 100000)
+        tokenizer.freqNGramConstruct(params.sentenceFilename, params.aHundred)
         tokenizer
-      }).foldRight[PTBTokenizer](new PTBTokenizer()) { case (a, main) => main.merge(a) }
-
+      }).foldRight[Tokenizer](new Tokenizer()) { case (a, main) => main.merge(a) }
 
       result
         .prune()

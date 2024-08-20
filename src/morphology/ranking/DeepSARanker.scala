@@ -23,19 +23,48 @@ import org.nd4j.linalg.lossfunctions.LossFunctions
 import java.io.{File, FileInputStream, FileOutputStream, ObjectInputStream, ObjectOutputStream}
 import scala.io.Source
 
-class DeepRanker(params: Params) extends MorphPredictor(params) {
+class DeepSARanker(params: Params) extends DeepRanker(params) {
 
-  var dictionary = Map[String, Int]("dummy"-> 0)
-  var labelDictionary = Map[String, Int]("dummy" -> 0)
-  var labelSwap = Map[Int, String]()
-  var samples = Array[Array[RankMorpheme]]()
-  var computationGraph: ComputationGraph = null
+
+  override def construct(sequence: Sentence): MorphPredictor = {
+    val rankWords = sequence.words.map(word => word.toRankWord(params.maxSliceNgram))
+    rankWords.sliding(params.maxTokenWindow, 1).foreach(windowWords => {
+
+      analyzer.combinatoricMorpheme(windowWords).foreach(rankSequence => {
+        samples = samples :+ rankSequence.rankMorphemes
+
+        val (forwardFeatures, labels) = processForward(rankSequence.rankMorphemes)
+        forwardFeatures.foreach(item => {
+          if (!dictionary.contains(item)) {
+            dictionary = dictionary.updated(item, dictionary.size)
+          }
+        })
+
+        val (backwardFeatures, _) = processBackward(rankSequence.rankMorphemes)
+        backwardFeatures.foreach(item => {
+          if (!dictionary.contains(item)) {
+            dictionary = dictionary.updated(item, dictionary.size)
+          }
+        })
+
+        labels.foreach(item => {
+          if (!labelDictionary.contains(item)) {
+            labelDictionary = labelDictionary.updated(item, labelDictionary.size)
+          }
+        })
+
+      })
+    })
+
+
+    this
+
+  }
 
 
   def processForward(sentence: Array[RankMorpheme]): (Array[String], Array[String]) = {
     val featureSequence = sentence.take(sentence.length - 1).flatMap(rankMorpheme => rankMorpheme.labels.filter(!_.lemmaLabel)).map(i=> ">>" + i.tags)
     val targetSequence = sentence.last.labels.filter(!_.lemmaLabel).map(_.tags)
-
     (featureSequence, targetSequence)
   }
 
@@ -83,90 +112,6 @@ class DeepRanker(params: Params) extends MorphPredictor(params) {
         targetMorpheme.incRank(rankScore)
       })
     }}
-
-
-  }
-
-  override def construct(sequence: Sentence): MorphPredictor = {
-    val rankWords = sequence.words.map(word => word.toRankWord(params.maxSliceNgram))
-    rankWords.sliding(params.maxTokenWindow, 1).foreach(windowWords => {
-
-      analyzer.combinatoricMorpheme(windowWords).foreach(rankSequence => {
-        samples = samples :+ rankSequence.rankMorphemes
-
-        val (forwardFeatures, labels) = processForward(rankSequence.rankMorphemes)
-        forwardFeatures.foreach(item => {
-          if (!dictionary.contains(item)) {
-            dictionary = dictionary.updated(item, dictionary.size)
-          }
-        })
-
-        val (backwardFeatures, _) = processBackward(rankSequence.rankMorphemes)
-        backwardFeatures.foreach(item => {
-          if (!dictionary.contains(item)) {
-            dictionary = dictionary.updated(item, dictionary.size)
-          }
-        })
-
-        labels.foreach(item => {
-          if (!labelDictionary.contains(item)) {
-            labelDictionary = labelDictionary.updated(item, labelDictionary.size)
-          }
-        })
-
-      })
-    })
-
-
-    this
-
-  }
-
-
-  def bowFeatures(indices: Array[Int], maxSize: Int): INDArray = {
-
-    val ndarray = Nd4j.zeros(1, maxSize, params.maxTokenWindow)
-    indices.zipWithIndex.foreach{case(indice, windex) => {
-      ndarray.put(Array(NDArrayIndex.point(0), NDArrayIndex.point(indice), NDArrayIndex.point(windex)), 1f)
-    }}
-
-    ndarray
-  }
-
-  def indexFeatures(indices: Array[Int], windowSize: Int): INDArray = {
-
-    val ndarray = Nd4j.zeros(1, 1, windowSize)
-    indices.zipWithIndex.foreach{case(indice, windex) => {
-      ndarray.put(Array(NDArrayIndex.point(0), NDArrayIndex.point(0), NDArrayIndex.point(windex)), indice.toFloat)
-    }}
-
-    ndarray
-  }
-
-  def maskInput(maxWindowSize:Int, actualSize:Int):INDArray={
-    val maskArray = Nd4j.zeros(1, maxWindowSize)
-    for(i<-0 until actualSize){
-      maskArray.put(Array(NDArrayIndex.point(0), NDArrayIndex.point(i)), 1f)
-    }
-    maskArray
-  }
-
-  def maskLabel(maxWindowSize:Int, actualSize:Int):INDArray={
-    val maskArray = Nd4j.zeros(1, maxWindowSize)
-    for(i<-0 until actualSize){
-      maskArray.put(Array(NDArrayIndex.point(0), NDArrayIndex.point(i)), 1f)
-    }
-    maskArray
-  }
-
-
-  def bowLabel(indices: Array[Int], maxSize: Int): INDArray = {
-    val ndarray = Nd4j.zeros(1, maxSize)
-    indices.foreach(indice=>{
-      ndarray.put(Array(NDArrayIndex.point(0), NDArrayIndex.point(indice)), 1f)
-    })
-
-    ndarray
   }
 
 
@@ -185,8 +130,6 @@ class DeepRanker(params: Params) extends MorphPredictor(params) {
       })
       .toArray
   }
-
-
 
 
 
@@ -291,52 +234,6 @@ class DeepRanker(params: Params) extends MorphPredictor(params) {
   }
 
 
-  def train(): this.type = {
-
-    var i = 0
-    val fname = params.neuralModelFilename()
-    val modelFile = new File(fname)
-    println("LSTM filename: " + fname)
-    if (!(modelFile.exists())) {
-
-      load()
-
-      computationGraph = model()
-      computationGraph.addListeners(new PerformanceListener(2, true))
-
-      val multiDataSetIterator = iterator()
-      while (i < params.maxNeuralEpocs) {
-
-        println("Epoc : " + i)
-        computationGraph.fit(multiDataSetIterator)
-        multiDataSetIterator.reset()
-        i = i + 1
-      }
-
-      println("Saving model...")
-      ModelSerializer.writeModel(computationGraph, modelFile, true)
-      //uiServer.stop()
-      System.gc()
-      save()
-    }
-    else {
-      computationGraph = ModelSerializer.restoreComputationGraph(modelFile)
-    }
-    this
-
-  }
-
-  override def save(): this.type = {
-    ModelSerializer.writeModel(computationGraph, params.neuralModelFilename(), true)
-    this
-  }
-
-  override def load(): this.type = {
-
-    this
-
-  }
-
 
   def model(): ComputationGraph = {
 
@@ -359,8 +256,8 @@ class DeepRanker(params: Params) extends MorphPredictor(params) {
       .layer("pooling", new GlobalPoolingLayer.Builder().poolingType(PoolingType.MAX).build(), "attention")
       .layer("dense_base", new DenseLayer.Builder().nIn(params.hiddenSize).nOut(params.hiddenSize).activation(Activation.RELU).build(), "pooling")
       .layer("dense", new DenseLayer.Builder().nIn(params.hiddenSize).nOut(params.hiddenSize).activation(Activation.RELU).build(), "dense_base")
-      .layer("output", new OutputLayer.Builder().nIn(params.hiddenSize).nOut(params.maxLabels).activation(Activation.SOFTMAX)
-        .lossFunction(LossFunctions.LossFunction.MCXENT).build, "dense")
+      .layer("output", new OutputLayer.Builder().nIn(params.hiddenSize).nOut(params.maxLabels).activation(Activation.SIGMOID)
+        .lossFunction(LossFunctions.LossFunction.XENT).build, "dense")
       .setInputTypes(InputType.recurrent(params.maxFeatures))
       .build()
 
@@ -370,23 +267,5 @@ class DeepRanker(params: Params) extends MorphPredictor(params) {
 
 
 
-  override def merge(other: MorphPredictor): MorphPredictor = {
-    val otherPredictor = other.asInstanceOf[DeepRanker]
-    samples = samples ++ otherPredictor.samples
-    otherPredictor.labelDictionary.foreach{case(labelItem, index)=>{
-      if(!labelDictionary.contains(labelItem)) labelDictionary = labelDictionary.updated(labelItem, labelDictionary.size)
-    }}
 
-    otherPredictor.dictionary.foreach{case(featureItem, index)=>{
-      if(!dictionary.contains(featureItem)) dictionary = dictionary.updated(featureItem, dictionary.size)
-    }}
-
-    this
-  }
-
-  override def trigger(): MorphPredictor = {
-    train()
-    labelSwap = labelDictionary.map(_.swap)
-    this
-  }
 }

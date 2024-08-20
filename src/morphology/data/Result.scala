@@ -1,22 +1,26 @@
 package morphology.data
 
-import nn.embeddings.EmbedParams
-
 
 case class Key(original: String, predicted: String)
 
-case class Count(item: String, var count: Int) {
+case class Count(item: String, var count: Double) {
   def inc(): Count = {
     count += 1
     this
   }
+  def incBy(value:Double): Count = {
+    count += value
+    this
+  }
+
 
   override def hashCode(): Int = item.hashCode()
+
   override def equals(obj: Any): Boolean = item.equals(obj.asInstanceOf[Count].item)
 }
 
 
-case class ResultMatrix() {
+case class Result(params: Params) {
   val epsilon = 1E-10f
   var confusionMap = Map[Key, Float]()
   var originalMap = Map[String, Float]()
@@ -33,20 +37,22 @@ case class ResultMatrix() {
 
   var predictionMap = Map[String, Float]()
   var tpanalysis = 0f
-  var tpsentence = 0f
-  var cntsentence = 0f
-  var cntanalysis = 0f
+  var tpambiguous = 0f
   var tptop5 = 0f
+  var countAmbigous = 0f
+  var tpsentence = 0f
+  var countSentence = 0f
+  var countAnalysis = 0f
 
-  def clear(): ResultMatrix = {
+  def clear(): Result = {
     confusionMap = Map[Key, Float]()
     originalMap = Map[String, Float]()
     predictionMap = Map[String, Float]()
     tpanalysis = 0f
     tpsentence = 0f
-    cntanalysis = 0f
+    countAnalysis = 0f
     tptop5 = 0f
-    cntsentence = 0f
+    countSentence = 0f
     this
   }
 
@@ -58,8 +64,9 @@ case class ResultMatrix() {
   def totalCount(): Float = {
     confusionMap.toArray.map(pair => (pair._1.original, pair._2)).groupBy(_._1).view.mapValues(_.map(_._2).sum)
       .toArray.map(_._2).sum
-
   }
+
+
 
   def tpCount(): Map[String, Float] = {
     confusionMap.toArray.filter(pair => pair._1.predicted.equals(pair._1.original)).map(pair => (pair._1.original, pair._2)).groupBy(_._1).view.mapValues(_.map(_._2).sum)
@@ -97,18 +104,30 @@ case class ResultMatrix() {
     precisionMap.map { case (key, score) => (key, 2 * score * recallMap.getOrElse(key, 1f) / (recallMap.getOrElse(key, epsilon) + score)) }
   }
 
-  def tagLabel(item:String):String= {
+  def tagLabel(item: String): String = {
     "<LABEL ITEM=\"" + item + "\">"
   }
 
-  def tagScore(label:String, score:Double):String= {
-    "<TAG LABEL=\""+label+"\" SCORE=\""+score+"\"/>\n"
-  }
-  def itemScore(item:String, label:String, score:Double):String= {
-    "<" + item+" LABEL=\""+label+"\" SCORE=\""+score+"\"/>\n"
+  def tagScore(label: String, score: Float): String = {
+    "<TAG LABEL=\"" + label + "\" SCORE=\"" + score + "\"/>\n"
   }
 
-  def toXML(params: Params, filename: String): String = {
+  def itemScore(label: String, score: Float): String = {
+    "<" + label + " SCORE=\"" + score + "\"/>\n"
+  }
+
+  def counts(array: Array[(Key, Float)]): String = {
+    array.sortBy(pair => pair._2).map { case (key, score) => "<TAG ORIGINAL=\"" + key.original + "\"" + " PREDICTED=\"" + key.predicted + "\" COUNT=\"" + score.toString + "\"/>" }.mkString("\n")
+  }
+
+  def toShortLine():String = {
+    val analysisAcc = tpanalysis / countAnalysis
+    val ambiguousAcc = tpambiguous / countAmbigous
+    val topacc = tptop5 / countAnalysis
+    params.skipHeadAmbiguity + "," + params.maxSliceNgram + "," + params.prunningRatio + "," + params.maxTokenWindow + "," + analysisAcc + "," + ambiguousAcc + "," + topacc
+  }
+
+  def toXML(filename: String): String = {
 
     sumCount = totalCount()
     originalMap = originalCount()
@@ -125,88 +144,128 @@ case class ResultMatrix() {
     val precisionScore = precisionMap.map(_._2).sum / precisionMap.size
     val recallScore = recallMap.map(_._2).sum / recallMap.size
 
+    val sentenceAcc = tpsentence / countSentence
+    val analysisAcc = tpanalysis / countAnalysis
+    val analysisTop5Acc = tptop5 / countAnalysis
+
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-      "<RESULTS EXPERIMENT = \"" + params.modelId() + "\">\n" +
+      "<RESULTS EXPERIMENT = \"" + params.modelID() + "\">\n" +
       params.toXML() +
       "<DATASET  DATASET=\"" + filename + "\"/>\n" +
-      "<SENTENCE TOTAL=\"" + cntsentence + "\"/>\n" +
-      "<ANALYSIS TOTAL=\"" + cntanalysis + "\"/>\n" +
+      "<SENTENCE TOTAL=\"" + countSentence + "\"/>\n" +
+      "<ANALYSIS TOTAL=\"" + countAnalysis + "\"/>\n" +
       "<SENTENCE TP=\"" + tpsentence + "\"/>\n" +
-      "<SENTENCE ACCURACY=\"" + tpsentence / cntsentence + "\"/>\n" +
-      "<ANALYSIS ACCURACY=\"" + tpanalysis / cntanalysis + "\"/>\n" +
-      "<ANALYSIS TOP3=\"" + tptop5 / cntanalysis + "\"/>\n" +
-      "<FMEASURE SCORE =\"" + fscore + "\"/>\n" +
-      "<PRECISION SCORE =\"" + precisionScore + "\"/>\n" +
-      "<RECALL SCORE =\"" + recallScore + "\"/>\n" +
-
-      "<COVARIANCE>" +
+      "<SENTENCE ACCURACY=\"" + sentenceAcc + "\"/>\n" +
+      "<ANALYSIS ACCURACY=\"" + analysisAcc + "\"/>\n" +
+      "<AMBIGUOUS ACCURACY=\"" + tpambiguous/countAmbigous + "\"/>\n" +
+      "<ANALYSIS TOP5=\"" + analysisTop5Acc  + "\"/>\n" +
+      itemScore("FMEASURE", fscore) +
+      itemScore("PRECISION", precisionScore) +
+      itemScore("RECALL", recallScore) +
+      "<COVARIANCE>\n" +
       confusionMap.toArray.groupBy(_._1.original).toArray.map { case (original, scores) => {
-        "<LABEL ITEM=\"" + original + "\">" +
-          "<TAG LABEL=\"PRECISION\" SCORE=\"" + precisionMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"RECALL\" SCORE=\"" + recallMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"FMEASURE\" SCORE=\"" + fmeasureMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"TP\" SCORE=\"" + tpMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"FP\" SCORE=\"" + fpMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"FN\" SCORE=\"" + fnMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          "<TAG LABEL=\"TN\" SCORE=\"" + tnMap.getOrElse(original, 0f).toString + "\"/>\n" +
-          scores.sortBy(pair => pair._2).map { case (key, score) => "<TAG ORIGINAL=\"" + key.original + "\"" + " PREDICTED=\"" + key.predicted + "\" COUNT=\"" + score.toString + "\"/>" }.mkString("\n") +
+        "<LABEL ITEM=\"" + original + "\">\n" +
+          tagScore("PRECISION", precisionMap.getOrElse(original, 0f)) +
+          tagScore("RECALL", recallMap.getOrElse(original, 0f)) +
+          tagScore("FMEASURE", fmeasureMap.getOrElse(original, 0f)) +
+          tagScore("TRUEPOSITIVES", tpMap.getOrElse(original, 0f)) +
+          tagScore("FALSEPOSITIVES", fpMap.getOrElse(original, 0f)) +
+          tagScore("TRUENEGATIVES", tnMap.getOrElse(original, 0f)) +
+          tagScore("FALSENEGATIVES", fnMap.getOrElse(original, 0f)) +
+          counts(scores) + "\n" +
           "</LABEL>"
       }
-      }.mkString("\n") +
+      }.mkString("\n") + "\n" +
       "</COVARIANCE>" +
       "</RESULTS>"
   }
 
-  def increment(value: Boolean): ResultMatrix = {
-    synchronized {
-      tpsentence = tpsentence + (if (value) 1 else 0)
-      cntsentence = cntsentence + 1
-      this
+  def incrementTop5(count:Int):Result={
+    tptop5  = count
+    this
+  }
+
+  def incrementAmbiguous(totalAmbiguous:Int, trueAmbigous:Int):Result={
+    this.countAmbigous += totalAmbiguous
+    this.tpambiguous += trueAmbigous
+    this
+  }
+
+  def increment(value: Boolean): Result = {
+    tpsentence = tpsentence + (if (value) 1 else 0)
+    countSentence = countSentence + 1
+    this
+  }
+
+  def addTop5(word:Word, predicted:Array[String]):Int={
+    val trueLabel = word.originalAnalyses.head
+    if(predicted.contains(trueLabel)){
+      1
+    }
+    else {
+      0
     }
   }
 
-  def add(word: Word, predicted: String): (Int, String) = {
-    synchronized {
-      val original = word.analyzes.head
-      val foundinous = word.similarities(predicted, embedParams.secondOrder).reverse
-        .take(5)
-      val found = foundinous.last
+  def addAmbiguous(word:Word, predicted:String):(Int, Int)={
+    val trueLabel = word.originalAnalyses.head
+    if(!word.notAmbiguous()){
+      if(trueLabel.equals(predicted)) (1, 1)
+      else (1, 0)
+    }
+    else{
+      (0, 0)
+    }
+  }
 
-      cntanalysis = cntanalysis + 1
+  def addPrediction(word: Word, predicted: String): (Int, String) = {
 
-      if (foundinous.contains(original)) {
-        tptop5 = tptop5 + 1
-      }
-
-      if (original.equals(found)) {
-        tpanalysis = tpanalysis + 1
-        original.split(splitter.splitBy).tail.foreach(item => {
-          val kk = Key(item, item)
-          confusionMap = confusionMap.updated(kk, confusionMap.getOrElse(kk, 0f) + 1f)
+    val original = word.originalAnalyses.head
+    if(original.equals(predicted)){
+      tpanalysis = tpanalysis + 1
+      countAnalysis = countAnalysis + 1
+      original.split(word.splitBy).tail.foreach(item => {
+        val kk = Key(item, item)
+        confusionMap = confusionMap.updated(kk, confusionMap.getOrElse(kk, 0f) + 1f)
+      })
+      (1, original)
+    }
+    else{
+      val predictMorphtags = predicted.split(word.splitBy).tail
+      val originalMorphtags = original.split(word.splitBy).tail
+      originalMorphtags.foreach(originalTag => {
+        val falsePredictions = predictMorphtags.filter(pred => !pred.equals(originalTag))
+        falsePredictions.foreach(predictedTag => {
+          val confusionKey = Key(originalTag, predictedTag)
+          confusionMap = confusionMap.updated(confusionKey, confusionMap.getOrElse(confusionKey, 0f) + 1f)
         })
-        (1, found)
-      }
-      else {
-        val predictArray = found.split("\\+").tail
-        original.split("\\+").tail.foreach(item => {
-          predictArray.filter(pred => !pred.equals(item)).foreach(prog => {
-            val kk = Key(item, prog)
-            confusionMap = confusionMap.updated(kk, confusionMap.getOrElse(kk, 0f) + 1f)
-          })
-        })
-        (0, found)
-      }
-
+      })
+      countAnalysis = countAnalysis + 1
+      (0, predicted)
     }
+
   }
 
-  def addNoWord(word: Word, predicted: String): String = {
-    synchronized {
-      val foundinous = word.similarities(predicted, embedParams.secondOrder).reverse
-        .take(5)
-      val found = foundinous.last
-      found
-    }
+  def mostSimilar(word: Word, predicted: String): String = {
+    val foundinous = word.similarity(predicted)
+    val found = foundinous.last
+    found
   }
-}
+
+  def merge(other: Result): Result = {
+    countAnalysis += other.countAnalysis
+    countSentence += other.countSentence
+
+    countAmbigous += other.countAmbigous
+    tpambiguous += other.tpambiguous
+    tptop5 += other.tptop5
+    tpanalysis += other.tpanalysis
+    tpsentence += other.tpsentence
+    other.confusionMap.foreach { case (key, count) => {
+      confusionMap = confusionMap.updated(key, confusionMap.getOrElse(key, 0f) + count)
+    }}
+
+    this
+  }
+
 }
