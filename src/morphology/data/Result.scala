@@ -23,6 +23,8 @@ case class Count(item: String, var count: Double) {
 case class Result(params: Params) {
   val epsilon = 1E-10f
   var confusionMap = Map[Key, Float]()
+  var worstCaseMap = Map[Key, Float]()
+
   var originalMap = Map[String, Float]()
   var sumCount = 0f
 
@@ -147,6 +149,7 @@ case class Result(params: Params) {
     val sentenceAcc = tpsentence / countSentence
     val analysisAcc = tpanalysis / countAnalysis
     val analysisTop5Acc = tptop5 / countAnalysis
+    val worstCases = worstCaseMap.toArray.sortBy(pair=> pair._2).reverse.take(50)
 
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
       "<RESULTS EXPERIMENT = \"" + params.modelID() + "\">\n" +
@@ -162,6 +165,9 @@ case class Result(params: Params) {
       itemScore("FMEASURE", fscore) +
       itemScore("PRECISION", precisionScore) +
       itemScore("RECALL", recallScore) +
+      "<WORST_CASES>\n" +
+      worstCases.map(pair=> "<ITEM ORIGINAL=\"" + pair._1.original + "\" PREDICTED=\""+pair._1.predicted+"\"/>").mkString("\n") +
+      "</WORST_CASES>\n" +
       "<COVARIANCE>\n" +
       confusionMap.toArray.groupBy(_._1.original).toArray.map { case (original, scores) => {
         "<LABEL ITEM=\"" + original + "\">\n" +
@@ -231,6 +237,7 @@ case class Result(params: Params) {
       (1, original)
     }
     else{
+
       val predictMorphtags = predicted.split(word.splitBy).tail
       val originalMorphtags = original.split(word.splitBy).tail
       originalMorphtags.foreach(originalTag => {
@@ -241,10 +248,15 @@ case class Result(params: Params) {
         })
       })
       countAnalysis = countAnalysis + 1
+
+      val worstKey = Key(original, predicted)
+      worstCaseMap = worstCaseMap.updated(worstKey, worstCaseMap.getOrElse(worstKey, 0f) + 1f)
+
       (0, predicted)
     }
-
   }
+
+
 
   def mostSimilar(word: Word, predicted: String): String = {
     val foundinous = word.similarity(predicted)
@@ -263,6 +275,10 @@ case class Result(params: Params) {
     tpsentence += other.tpsentence
     other.confusionMap.foreach { case (key, count) => {
       confusionMap = confusionMap.updated(key, confusionMap.getOrElse(key, 0f) + count)
+    }}
+
+    other.worstCaseMap.foreach { case (key, count) => {
+      worstCaseMap = worstCaseMap.updated(key, worstCaseMap.getOrElse(key, 0f) + count)
     }}
 
     this

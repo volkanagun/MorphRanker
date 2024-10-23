@@ -2,10 +2,9 @@ package morphology.data
 
 import morphology.morph.{MorphAnalyzer, Tokenizer}
 
-import java.io.{File, FileWriter, PrintWriter}
+import java.io.{File, PrintWriter}
 import java.text.BreakIterator
 import java.util.Locale
-import scala.collection.immutable.Map
 import scala.collection.parallel.CollectionConverters.{ArrayIsParallelizable, ImmutableIterableIsParallelizable}
 import scala.io.Source
 

@@ -321,7 +321,7 @@ object MorphExperiment {
 
   def experimentRanking(): Unit = {
 
-    val pars = rankParams()
+    val pars = rankParams().take(1)
     val testFilenames = tests()
 
     pars.par.foreach(param => {
