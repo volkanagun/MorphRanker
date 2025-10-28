@@ -104,18 +104,19 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     this
   }
 
-  def toStats(): DataStats = {
+  override def toStats(): DataStats = {
 
     val totalEdges = mapPositive.map(_._2.edges.size).sum
     val totalByEdgeType = mapPositive.flatMap(_._2.edges.map(_._1.label))
       .groupBy(item => item).view.mapValues(_.size)
       .toMap
 
-    stats.totalTagDepencies = totalEdges
-    stats.totalDistantLink = totalByEdgeType("Distant")
-    stats.totalLocalLink = totalByEdgeType("Local")
-    stats.totalNonLocalLink = totalByEdgeType("Neighbour")
-    stats
+    trainStats.totalTagDepencies = totalEdges
+    trainStats.totalDistantLink = totalByEdgeType("Forward-Distant")
+    trainStats.totalLocalLink = totalByEdgeType("Forward-Local")
+    trainStats.totalNonLocalLink = totalByEdgeType("Forward-Neighbour")
+    params.trainStats = trainStats
+    params.trainStats
   }
 
   def linkMarker(i: Int): String = {
@@ -172,6 +173,26 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     val logSum = scores.map(i => -1 * math.log(i)).sum / scores.length
     rankMorpheme.setLoglikelihood(logSum)
     rankMorpheme
+  }
+
+  def infer(sentenceLine:String):Option[String] = {
+    val sentence = Dataset.parseSentence(sentenceLine)
+    val analysis = sentence.words.map(word => word.toRankWord(params.maxSliceNgram))
+    val voteMap = infer(analysis)
+    var resultLine = ""
+
+    if (voteMap.size < sentence.length()) {
+      None
+    }
+    else{
+      for (i <- 0 until sentence.length()) {
+        val array = voteMap(i)
+        val analysis = array.head.analysis
+        resultLine += " " + analysis
+      }
+      Some(resultLine.trim)
+    }
+
   }
 
   def infer(results: Array[RankWord]): Map[Int, Array[RankMorpheme]] = {
@@ -265,6 +286,7 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     }
 
     this.count += otherRanker.count
+    this.trainStats.merge(otherRanker.trainStats)
     this
   }
 

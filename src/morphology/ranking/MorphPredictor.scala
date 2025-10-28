@@ -6,12 +6,13 @@ import morphology.morph.{MorphAnalyzer, Tokenizer}
 import java.io.{File, FileInputStream, FileOutputStream, ObjectInputStream, ObjectOutputStream}
 import scala.collection.parallel.CollectionConverters.ArrayIsParallelizable
 
-abstract class MorphPredictor(val params:Params) extends Serializable{
+abstract class MorphPredictor(val params:Params) extends Serializable {
 
   val tokenizer = new Tokenizer()
   val analyzer = new MorphAnalyzer()
     .setAmbiguityFreq(params.maxPairAmbiguity)
-  val stats = new DataStats()
+  val trainStats = new DataStats()
+
   var order: Array[Int] = Array[Int](1, 2, 3)
   var window: Int = 20
   var isTraining = true
@@ -57,11 +58,15 @@ abstract class MorphPredictor(val params:Params) extends Serializable{
   }
 
   def statistics(sentence: Sentence): Unit = {
-    stats.totalSentences += 1
-    stats.totalAnalysis += sentence.countAnalysis()
-    stats.totalTokens += sentence.length
-    stats.totalTags += sentence.countTags()
+    trainStats.totalSentences += 1
+    trainStats.totalAnalysis += sentence.countAnalysis()
+    trainStats.totalTokens += sentence.length
+    trainStats.totalTags += sentence.countTags()
+    trainStats.totalAmbiguousSentences +=  {if (sentence.countAmbiguity() > 1) 1 else 0}
+
   }
+
+  def toStats(): DataStats = trainStats
 
   def trigger():MorphPredictor
 
@@ -74,8 +79,11 @@ abstract class MorphPredictor(val params:Params) extends Serializable{
       if (sentenceAmbiguity <= params.maxSentenceAmbiguity) {
         statistics(sentence)
         construct(sentence)
+
       }
     })
+
+
 
     this
   }

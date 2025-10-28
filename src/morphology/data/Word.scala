@@ -124,7 +124,7 @@ case class Word(index: Int, text: String, var originalAnalyses: Array[String]) {
         .setLemmaLabel(true)
 
       labelSlices =  lemmaLabel +: labelSlices
-      RankMorpheme(this.index, analysis, labelSlices, 0, 1d / originalAnalyses.length)
+      RankMorpheme(index, analysis, labelSlices, 0, 1d / originalAnalyses.length)
     })
 
     new RankWord(rankMorphemes)

@@ -177,8 +177,8 @@ class GMMRanker(params: Params) extends MorphPredictor(params) {
     val totalSamples = dataBy.map(pair => pair._2.length).sum
     val totalTargetTags = dataBy.size
 
-    params.trainStats.totalSentences = totalSamples
-    params.trainStats.totalTags = totalTargetTags
+    trainStats.totalSentences = totalSamples
+    trainStats.totalTags = totalTargetTags
 
   }
 

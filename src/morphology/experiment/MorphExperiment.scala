@@ -1,6 +1,6 @@
 package morphology.experiment
 
-import morphology.data.{Count, Dataset, MorphRanker, Params, Result, Sentence, Word}
+import morphology.data.{Count, DataStats, Dataset, MorphRanker, Params, Result, Sentence, Word}
 import morphology.experiment.MorphExperiment.tests
 import morphology.ranking.{DeepELMORanker, DeepSARanker, GMMRanker, MorphPredictor, RankMorpheme}
 
@@ -12,7 +12,7 @@ import scala.util.Random
 class MorphExperiment(val params: Params) {
 
   var result = new Result(params)
-
+  var testStats = new DataStats()
 
   def resultFilename(datasetFilename: String): String = {
     val datasetFid = "DataSetID=" + params.datasetID()
@@ -23,10 +23,26 @@ class MorphExperiment(val params: Params) {
     filename
   }
 
+  def statsFilename(datasetFilename: String): String = {
+    val datasetFid = "DataSetID=" + params.datasetID()
+    val modelFid = "ModelID=" + params.modelID()
+    val taskName = "Task=" + datasetFilename.substring(datasetFilename.lastIndexOf("/") + 1, datasetFilename.lastIndexOf("."))
+    val fid = datasetFid + "|" + modelFid + "|" + taskName
+    val filename = "resources/results/" + fid + ".stats"
+    filename
+  }
+
   def save(datasetFilename: String): Unit = {
     val filename = resultFilename(datasetFilename)
     new PrintWriter(filename) {
       println(result.toXML(datasetFilename))
+    }.close()
+  }
+
+  def saveTestStats(datasetFilename: String): Unit = {
+    val filename = statsFilename(datasetFilename)
+    new PrintWriter(filename) {
+      println(testStats.toXML())
     }.close()
   }
 
@@ -48,7 +64,20 @@ class MorphExperiment(val params: Params) {
     if (!exists(testFilename)) {
       val analyzer = train()
       val sentences = Dataset.readSentences(testFilename)
-      sentences.par.map(sentence => measure(analyzer, sentence))
+      val sentenceCount = sentences.length
+
+      //Statistics
+      sentences.foreach(sentence=>{
+        aggregateStats(sentence, sentenceCount)
+      })
+
+      saveTestStats(testFilename)
+
+      //Inference
+      sentences.par.map(sentence => {
+
+          measure(analyzer, sentence)
+        })
         .toArray
         .foreach(other => result.merge(other))
       save(testFilename)
@@ -107,23 +136,28 @@ class MorphExperiment(val params: Params) {
         println("Crr file: " + file.getName)
         (0 until params.maxEpocs).par.map { i => {
           println("DAG Epoc: " + i)
+
           val index = i * params.maxSentences
           val crrSentences = Source.fromFile(file).getLines()
             .filter(line => line.length <= params.maxSentenceLength)
             .zipWithIndex.filter(_._2 >= index).take(params.maxSentences).map(_._1)
             .toArray
 
+
           System.gc()
-          model().train(crrSentences)
+
+          val ranker = model().train(crrSentences)
+          println("Sentence count: "+ranker.trainStats.totalSentences)
+          ranker
         }
         }.toArray.foreach(other => morphRanker.merge(other))
       })
 
       morphRanker.trigger().save()
 
-
     }
 
+    morphRanker.toStats()
     morphRanker
 
   }
@@ -138,6 +172,13 @@ class MorphExperiment(val params: Params) {
     voteMap.updated(index, array)
   }
 
+  def aggregateStats(sentence: Sentence, totalSentenceCount:Int): this.type = {
+    testStats.totalSentences += 1
+    testStats.totalAnalysis+= sentence.countAnalysis()
+    testStats.totalTokens += sentence.length()
+    testStats.avgAmbiguouity+=sentence.countAmbiguity().toDouble/totalSentenceCount
+    this
+  }
 
   def measure(morphRanker: MorphPredictor, sentence: Sentence): Result = {
 
@@ -229,6 +270,12 @@ object MorphExperiment {
     params.testFilenames
   }
 
+  def constructTraining(): Unit = {
+    val p  = new Params()
+    new MorphExperiment(p).constructTraining()
+  }
+
+
   def rankSA(): Array[Params] = {
 
     val maxWindows = new Params().maxWindowArray
@@ -242,9 +289,9 @@ object MorphExperiment {
       params.skipHeadAmbiguity = 1
       params.maxFeatures = 5000
       params.maxLabels = 1000
-      params.maxSentences = 1000
+      params.maxSentences = 10000
       params.maxSentenceLength = 150
-      params.maxEpocs = 40
+      params.maxEpocs = 100
       params.maxNeuralEpocs = 1
       params.maxSliceNgram = 2
       params.batchSize = 96
@@ -270,9 +317,9 @@ object MorphExperiment {
       params.skipHeadAmbiguity = 1
       params.maxFeatures = 5000
       params.maxLabels = 1000
-      params.maxSentences = 100
+      params.maxSentences = 10000
       params.maxSentenceLength = 150
-      params.maxEpocs = 96
+      params.maxEpocs = 100
       params.maxNeuralEpocs = 1
       params.maxSliceNgram = 2
       params.batchSize = 48
@@ -303,9 +350,9 @@ object MorphExperiment {
             params.skipHeadAmbiguity = skipHead
             params.maxTokenWindow = maxWindow
             params.maxSentenceAmbiguity = Int.MaxValue
-            params.maxSentences = 1000
+            params.maxSentences = 10000
             params.maxRankIters = 10
-            params.maxEpocs = 200
+            params.maxEpocs = 100
             params.maxSliceNgram = maxSlice
             params.sentenceFilename = params.sentenceLabel4Filename
             params
@@ -330,7 +377,7 @@ object MorphExperiment {
         !new MorphExperiment(param).exists(testFilename)
       }).map(testFilename => {
         new MorphExperiment(param)
-          .constructTraining()
+          //.constructTraining()
           .evaluate(testFilename)
           .saveAppend()
       })
@@ -371,6 +418,7 @@ object MorphExperiment {
   def main(args: Array[String]): Unit = {
 
     System.setProperty("org.bytedeco.openblas.load", "mkl")
+    //constructTraining()
     experimentRanking()
     //constructTraining()
     //experimentGMM()
