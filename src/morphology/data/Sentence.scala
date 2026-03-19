@@ -41,7 +41,7 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
   }
 
   def toNonStemNotAmbiguousLabels(slice: Int): Array[Label] = {
-    words.filter(word=> word.notAmbiguous()).flatMap(word => word.toNonStemLabels(slice))
+    words.filter(word => word.notAmbiguous()).flatMap(word => word.toNonStemLabels(slice))
   }
 
   def toNonStemWordLabels(slice: Int): Array[Array[Label]] = {
@@ -50,7 +50,7 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
 
   def toNonStemTrueWordLabels(slice: Int): Array[Array[Label]] = {
     words.map(word => {
-      if(word.notAmbiguous()) word.toNonStemLabels(slice)
+      if (word.notAmbiguous()) word.toNonStemLabels(slice)
       else Array()
     })
   }
@@ -110,7 +110,6 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
     }
   }
 
-
   def toPairs(maxAmbiguity: Int, sliceSize: Int, func: (Int) => String, orders: Array[Int]): Array[(String, Label, Label)] = {
 
     orders.flatMap(order => {
@@ -120,9 +119,12 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
           val distance = order - 1
           val linkName = "Forward-" + func(distance)
           val array = if (linkName.contains("Local")) {
-            val allSeq = elem.head.toDistinctLabels(sliceSize)
-            allSeq.flatMap(crrSeq=>{
-              crrSeq.sliding(2, 1).map(localSeq=>{
+            val headElem = elem.head            
+            val allSeq = headElem.toDistinctLabels(sliceSize)
+            
+            allSeq.flatMap(crrSeq => {
+              val stemLabel = crrSeq.head
+              crrSeq.sliding(2, 1).map(localSeq => {
                 val headLabel = localSeq.head
                 val lastLabel = localSeq.last
                 (linkName, headLabel, lastLabel)
@@ -152,6 +154,57 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
           nonAmbiguous
         })
     })
+  }
+  
+  def toSuffixPairs(maxAmbiguity: Int, sliceSize: Int, func: (Int) => String, orders: Array[Int]): Array[(String, Label, Label)] = {
+
+    orders.flatMap(order => {
+      words.sliding(order, 1).toArray
+        .flatMap(elem => {
+
+          val distance = order - 1
+          val linkName = "Forward-" + func(distance)
+          val array = if (linkName.contains("Local")) {
+            val headElem = elem.head            
+            val allSeq = headElem.toDistinctLabels(sliceSize)
+            
+            allSeq.flatMap(crrSeq => {
+              val stemLabel = crrSeq.head
+              crrSeq.sliding(2, 1).map(localSeq => {
+                val headLabel = localSeq.head.suffixation()
+                val lastLabel = localSeq.last.suffixation()
+                
+                (linkName, headLabel, lastLabel)
+              })
+            })
+
+          }
+          else {
+            val aLemma = elem.head.toLemmaLabels()
+            val bLemma = elem.last.toLemmaLabels()
+            val aResult = aLemma ++ elem.head.toNonStemLabels(sliceSize)
+            val bResult = bLemma ++ elem.last.toNonStemLabels(sliceSize)
+            aResult.flatMap(aLabel => {
+              bResult.map(bLabel => {
+                (linkName, aLabel.suffixation(), bLabel.suffixation())
+              })
+            })
+          }
+
+          val nonAmbiguous = array.filter(pair => {
+            val ambiguouity = pair._2.ambiguousCount * pair._3.ambiguousCount
+            ambiguouity <= maxAmbiguity
+          }).map(pair => {
+            (pair._1, pair._2, pair._3)
+          })
+
+          nonAmbiguous
+        })
+    })
+  }
+
+  def toContraintPairs(sliceSize: Int): Array[(Label, Label)] = {
+    words.flatMap(word => word.toContraintLabels(sliceSize))
   }
 
 

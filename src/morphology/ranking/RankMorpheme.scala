@@ -10,7 +10,10 @@ case class RankMorpheme(var tokenIndex: Int, var analysis: String, var labels: A
     if(that.rank == rank) this.negativeLogLikelihood.compare(that.negativeLogLikelihood)
     else this.rank.compare(that.rank)
   }
-
+  def suffixation():this.type={
+    this.labels = labels.map(_.suffixation())
+    this
+  }
   def setRank(score: Double): this.type = {
     this.rank = score
     this

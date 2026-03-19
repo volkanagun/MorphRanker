@@ -177,8 +177,8 @@ class GMMRanker(params: Params) extends MorphPredictor(params) {
     val totalSamples = dataBy.map(pair => pair._2.length).sum
     val totalTargetTags = dataBy.size
 
-    params.trainStats.totalSentences = totalSamples
-    params.trainStats.totalTags = totalTargetTags
+    trainStats.totalSentences = totalSamples
+    trainStats.totalTags = totalTargetTags
 
   }
 
@@ -188,7 +188,7 @@ class GMMRanker(params: Params) extends MorphPredictor(params) {
     multivariateGaussian(dataBy)
   }
 
-  def train(): this.type = {
+  override def train(): this.type = {
     println("Training ")
     val vectors = construct()
 
@@ -450,7 +450,7 @@ class GMMRanker(params: Params) extends MorphPredictor(params) {
 
         rankMorphemes.zip(predictionLabels).foreach { case (rankMorpheme, indices) => {
           val rank = indices.map(_._2).sum
-          var targetMorphemes = voteMax.getOrElse(rankMorpheme.tokenIndex, Array())
+          var targetMorphemes = voteMax.getOrElse(rankMorpheme.tokenIndex, Array[RankMorpheme]())
           val morphemeIndex = targetMorphemes.indexOf(rankMorpheme)
           if (morphemeIndex != -1) {
             val targetMorpheme = targetMorphemes(morphemeIndex)

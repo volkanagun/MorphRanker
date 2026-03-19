@@ -1,18 +1,18 @@
 package morphology.experiment
 
-import morphology.data.{Count, Dataset, MorphRanker, Params, Result, Sentence, Word}
+import morphology.data.{Count, DataStats, Dataset, MorphRanker, Params, Result, Sentence, Word}
 import morphology.experiment.MorphExperiment.tests
-import morphology.ranking.{DeepELMORanker, DeepSARanker, GMMRanker, MorphPredictor, RankMorpheme}
+import morphology.ranking.{GMMRanker, MorphPredictor, MorphTrainer, NMFModel, RankMorpheme}
 
 import java.io.{File, FileOutputStream, PrintWriter}
-import scala.collection.parallel.CollectionConverters.{ArrayIsParallelizable, ImmutableIterableIsParallelizable}
+import scala.collection.parallel.CollectionConverters.{ArrayIsParallelizable, seqIsParallelizable}
 import scala.io.Source
 import scala.util.Random
 
 class MorphExperiment(val params: Params) {
 
   var result = new Result(params)
-
+  var testStats = new DataStats()
 
   def resultFilename(datasetFilename: String): String = {
     val datasetFid = "DataSetID=" + params.datasetID()
@@ -23,10 +23,26 @@ class MorphExperiment(val params: Params) {
     filename
   }
 
+  def statsFilename(datasetFilename: String): String = {
+    val datasetFid = "DataSetID=" + params.datasetID()
+    val modelFid = "ModelID=" + params.modelID()
+    val taskName = "Task=" + datasetFilename.substring(datasetFilename.lastIndexOf("/") + 1, datasetFilename.lastIndexOf("."))
+    val fid = datasetFid + "|" + modelFid + "|" + taskName
+    val filename = "resources/results/" + fid + ".stats"
+    filename
+  }
+
   def save(datasetFilename: String): Unit = {
     val filename = resultFilename(datasetFilename)
     new PrintWriter(filename) {
       println(result.toXML(datasetFilename))
+    }.close()
+  }
+
+  def saveTestStats(datasetFilename: String): Unit = {
+    val filename = statsFilename(datasetFilename)
+    new PrintWriter(filename) {
+      println(testStats.toXML())
     }.close()
   }
 
@@ -48,7 +64,20 @@ class MorphExperiment(val params: Params) {
     if (!exists(testFilename)) {
       val analyzer = train()
       val sentences = Dataset.readSentences(testFilename)
-      sentences.par.map(sentence => measure(analyzer, sentence))
+      val sentenceCount = sentences.length
+
+      //Statistics
+      sentences.foreach(sentence => {
+        aggregateStats(sentence, sentenceCount)
+      })
+
+      saveTestStats(testFilename)
+
+      //Inference
+      sentences.par.map(sentence => {
+
+          measure(analyzer, sentence)
+        })
         .toArray
         .foreach(other => result.merge(other))
       save(testFilename)
@@ -66,6 +95,15 @@ class MorphExperiment(val params: Params) {
       .load()
   }
 
+  def modelNMF(): MorphPredictor = {
+    new MorphTrainer(params)
+      .setAmbiguityFreq(params.maxPairAmbiguity)
+      .setOrder(params.wordSkipOrder)
+      .setWindow(params.maxTokenWindow)
+      .setIsTraining(true)
+      .load()
+  }
+
 
   def modelGMM(): MorphPredictor = {
     new GMMRanker(params)
@@ -74,56 +112,49 @@ class MorphExperiment(val params: Params) {
       .load()
   }
 
-  def modelSelfAttention(): MorphPredictor = {
-    new DeepSARanker(params)
-      .setIsTraining(true)
-      .load()
-  }
-
-  def modelElmo(): MorphPredictor = {
-    new DeepELMORanker(params)
-      .setIsTraining(true)
-      .load()
-  }
 
   def model(): MorphPredictor = {
-    if ("gmm".equals(params.model)) modelGMM()
-    else if ("self-attention".equals(params.model)) modelSelfAttention()
-    else if ("elmo".equals(params.model)) modelElmo()
+    if ("nmf".equals(params.model)) modelNMF()
+    else if ("gmm".equals(params.model)) modelGMM()
     else modelRanker()
   }
 
   def train(): MorphPredictor = {
 
     val morphRanker: MorphPredictor = model()
-
-
     val modelFilename = params.rankModelFilename()
 
     if (!new File(modelFilename).exists()) {
       println("Filtering sentences")
       val files = new File(params.sentenceTrainFolder).listFiles()
-      files.foreach(file => {
-        println("Crr file: " + file.getName)
-        (0 until params.maxEpocs).par.map { i => {
-          println("DAG Epoc: " + i)
-          val index = i * params.maxSentences
-          val crrSentences = Source.fromFile(file).getLines()
-            .filter(line => line.length <= params.maxSentenceLength)
-            .zipWithIndex.filter(_._2 >= index).take(params.maxSentences).map(_._1)
-            .toArray
+      (0 until params.maxIterations).foreach(iter => {
+        files.foreach(file => {
+          println("Crr file: " + file.getName)
+          (0 until params.maxEpocs).toArray.par.map { i => {
+            println("DAG Epoc: " + i)
 
-          System.gc()
-          model().train(crrSentences)
-        }
-        }.toArray.foreach(other => morphRanker.merge(other))
+            val index = i * params.maxSentences
+            val crrSentences = Source.fromFile(file).getLines()
+              .filter(line => line.length <= params.maxSentenceLength)
+              .zipWithIndex.filter(_._2 >= index).take(params.maxSentences).map(_._1)
+              .toArray
+
+
+            System.gc()
+
+            val ranker = model().train(crrSentences)
+            println("Sentence count: " + ranker.trainStats.totalSentences)
+            ranker
+          }
+          }.toArray.foreach(other => morphRanker.merge(other))
+        })
+
+        morphRanker.train().trigger().save()
       })
-
-      morphRanker.trigger().save()
-
 
     }
 
+    morphRanker.toStats()
     morphRanker
 
   }
@@ -138,6 +169,13 @@ class MorphExperiment(val params: Params) {
     voteMap.updated(index, array)
   }
 
+  def aggregateStats(sentence: Sentence, totalSentenceCount: Int): this.type = {
+    testStats.totalSentences += 1
+    testStats.totalAnalysis += sentence.countAnalysis()
+    testStats.totalTokens += sentence.length()
+    testStats.avgAmbiguouity += sentence.countAmbiguity().toDouble / totalSentenceCount
+    this
+  }
 
   def measure(morphRanker: MorphPredictor, sentence: Sentence): Result = {
 
@@ -229,6 +267,12 @@ object MorphExperiment {
     params.testFilenames
   }
 
+  def constructTraining(): Unit = {
+    val p = new Params()
+    new MorphExperiment(p).constructTraining()
+  }
+
+
   def rankSA(): Array[Params] = {
 
     val maxWindows = new Params().maxWindowArray
@@ -242,9 +286,9 @@ object MorphExperiment {
       params.skipHeadAmbiguity = 1
       params.maxFeatures = 5000
       params.maxLabels = 1000
-      params.maxSentences = 1000
+      params.maxSentences = 10000
       params.maxSentenceLength = 150
-      params.maxEpocs = 40
+      params.maxEpocs = 100
       params.maxNeuralEpocs = 1
       params.maxSliceNgram = 2
       params.batchSize = 96
@@ -270,9 +314,9 @@ object MorphExperiment {
       params.skipHeadAmbiguity = 1
       params.maxFeatures = 5000
       params.maxLabels = 1000
-      params.maxSentences = 100
+      params.maxSentences = 10000
       params.maxSentenceLength = 150
-      params.maxEpocs = 96
+      params.maxEpocs = 100
       params.maxNeuralEpocs = 1
       params.maxSliceNgram = 2
       params.batchSize = 48
@@ -303,9 +347,46 @@ object MorphExperiment {
             params.skipHeadAmbiguity = skipHead
             params.maxTokenWindow = maxWindow
             params.maxSentenceAmbiguity = Int.MaxValue
-            params.maxSentences = 1000
+            params.maxSentences = 10000
             params.maxRankIters = 10
-            params.maxEpocs = 200
+            params.maxEpocs = 100
+            params.maxSliceNgram = maxSlice
+            params.sentenceFilename = params.sentenceLabel4Filename
+            params
+
+          })
+        })
+      })
+
+    })
+
+  }
+
+
+  def nmfParams(): Array[Params] = {
+    val prunningRatios = new Params().prunningRatios
+    val maxWindows = new Params().maxWindowArray
+    val maxSlices = new Params().maxSliceArray
+    val skipHeads = new Params().skipHeadArray
+
+    skipHeads.flatMap(skipHead => {
+      maxSlices.flatMap(maxSlice => {
+        maxWindows.flatMap(maxWindow => {
+          prunningRatios.map(prate => {
+
+            val params = new Params()
+            params.model = "nmf"
+            params.prunningRatio = prate
+            params.maxPairAmbiguity = 1
+            params.skipHeadAmbiguity = skipHead
+            params.maxTokenWindow = maxWindow
+            params.maxSentenceAmbiguity = Int.MaxValue
+            params.maxSentences = 10
+            params.maxEpocs = 10
+            params.batchSize = 1
+            params.maxRankIters = 10
+            params.maxEpocs = 100
+            params.vocabSize = 50000
             params.maxSliceNgram = maxSlice
             params.sentenceFilename = params.sentenceLabel4Filename
             params
@@ -330,7 +411,28 @@ object MorphExperiment {
         !new MorphExperiment(param).exists(testFilename)
       }).map(testFilename => {
         new MorphExperiment(param)
-          .constructTraining()
+          //.constructTraining()
+          .evaluate(testFilename)
+          .saveAppend()
+      })
+
+    })
+
+
+  }
+
+  def experimentNMF(): Unit = {
+
+    val pars = nmfParams().take(1)
+    val testFilenames = tests()
+
+    pars.par.foreach(param => {
+
+      testFilenames.filter(testFilename => {
+        !new MorphExperiment(param).exists(testFilename)
+      }).map(testFilename => {
+        new MorphExperiment(param)
+          //.constructTraining()
           .evaluate(testFilename)
           .saveAppend()
       })
@@ -371,7 +473,9 @@ object MorphExperiment {
   def main(args: Array[String]): Unit = {
 
     System.setProperty("org.bytedeco.openblas.load", "mkl")
-    experimentRanking()
+    //constructTraining()
+    //experimentRanking()
+    experimentNMF()
     //constructTraining()
     //experimentGMM()
     //experimentElmo()

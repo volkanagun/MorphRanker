@@ -11,6 +11,10 @@ case class Vertex(var label: String, var value: String) extends Serializable {
   var rankCount = 0d
   var sum = 0d
 
+  override def hashCode(): Int = value.hashCode()
+
+  override def equals(obj: Any): Boolean = obj.asInstanceOf[Vertex].value == value
+
   def setLabel(label: String): this.type = {
     this.label = label
     this

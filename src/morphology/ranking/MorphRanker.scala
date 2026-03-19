@@ -15,9 +15,14 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
   var mapPositive = Map[String, Vertex]()
   var mapNegative = Map[String, Vertex]()
   var probMap = Map[Label, Double]()
+  var indexMap = Map[Vertex, Int](Vertex("morph","empty") -> 0)
   var count = 0
   var dependencyCategory: (Int) => String = linkMarker
-
+  
+  
+  def index(vertex:Vertex):Int =
+    indexMap.getOrElse(vertex, 0)
+  
   def update(name: String, label: Label): Vertex = {
     val value = label.tags
     if (mapPositive.contains(value)) {
@@ -27,6 +32,7 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
       val vertex = Vertex(name, value)
         .setLemma(label.lemmaLabel)
       mapPositive = mapPositive + (value -> vertex)
+      indexMap = indexMap + (vertex -> indexMap.size)
       vertex
     }
   }
@@ -104,18 +110,19 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     this
   }
 
-  def toStats(): DataStats = {
+  override def toStats(): DataStats = {
 
     val totalEdges = mapPositive.map(_._2.edges.size).sum
     val totalByEdgeType = mapPositive.flatMap(_._2.edges.map(_._1.label))
       .groupBy(item => item).view.mapValues(_.size)
       .toMap
 
-    stats.totalTagDepencies = totalEdges
-    stats.totalDistantLink = totalByEdgeType("Distant")
-    stats.totalLocalLink = totalByEdgeType("Local")
-    stats.totalNonLocalLink = totalByEdgeType("Neighbour")
-    stats
+    trainStats.totalTagDepencies = totalEdges
+    trainStats.totalDistantLink = totalByEdgeType("Forward-Distant")
+    trainStats.totalLocalLink = totalByEdgeType("Forward-Local")
+    trainStats.totalNonLocalLink = totalByEdgeType("Forward-Neighbour")
+    params.trainStats = trainStats
+    params.trainStats
   }
 
   def linkMarker(i: Int): String = {
@@ -128,7 +135,6 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     sentence.toNonStemLabels(params.maxSliceNgram).foreach(label => {
       if (probMap.contains(label)) probMap = probMap.updated(label, probMap(label) + 1d)
       else probMap = probMap.updated(label, 1d)
-
       count += 1
     })
 
@@ -149,7 +155,6 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
         }
       }
     }
-
     this
   }
 
@@ -157,8 +162,8 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     val forwardPath = rankSequence.copy()
 
     if (params.forwardBackward) {
-      score(forwardPath.reverse(), params.wordSkipOrder, "Backward-")
-      score(forwardPath.reverse(), params.wordSkipOrder, "Forward-")
+      score(forwardPath, params.wordSkipOrder, "Forward-")
+      score(forwardPath.reverse(), params.wordSkipOrder, "Backward-")      
       forwardPath
     }
     else {
@@ -175,9 +180,10 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
   }
 
   def infer(results: Array[RankWord]): Map[Int, Array[RankMorpheme]] = {
-
-    var voteMap = (0 until results.length).map(i => (i -> Seq[RankMorpheme]())).toMap
-    results.sliding(params.maxTokenWindow, 1).foreach { tokenWindow => {
+    val items = results.map(_.suffixation())
+    var voteMap = (0 until items.length).map(i => (i -> Seq[RankMorpheme]())).toMap
+    
+    items.sliding(params.maxTokenWindow, 1).foreach { tokenWindow => {
       val windowCombinations = analyzer.combinatoricMorpheme(tokenWindow)
       windowCombinations.foreach(morphemePath => {
         val forwardPath = score(morphemePath)
@@ -194,7 +200,8 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
           }
         })
       })
-    }}
+    }
+    }
 
 
     val shuffleMap = voteMap.view.mapValues(s => {
@@ -218,13 +225,13 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
   def buildNegative(): MorphRanker = {
     println("Building negatives")
     val keys = mapPositive.keys.map(mapPositive)
-      .filter(v=> !v.isLemma)
+      .filter(v => !v.isLemma)
       .map(_.value)
     mapNegative = keys.zipWithIndex.par.map(pair => {
       val srcString = pair._1
-      println("Filtering: "+pair._2+"/"+keys.size)
+      println("Filtering: " + pair._2 + "/" + keys.size)
       val negativeKeys = keys.par.filter(dstString => !srcString.equals(dstString))
-        .filter(dstString => !mapPositive(srcString).edges.exists(pair=> pair._1.value.equals(dstString)))
+        .filter(dstString => !mapPositive(srcString).edges.exists(pair => pair._1.value.equals(dstString)))
 
       val negativeVertices = negativeKeys.map(negativeStr => VertexKey("Negative", negativeStr) -> 1.0).toArray.toMap
       val crrVertex = Vertex("morph", srcString).setEdges(negativeVertices)
@@ -244,6 +251,10 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     println("Merging ranker....")
     val otherRanker = other.asInstanceOf[MorphRanker]
     otherRanker.mapPositive.foreach { case (item, vertex) => {
+      
+      if (!indexMap.contains(vertex)){
+        indexMap = indexMap.updated(vertex, indexMap.size)
+      }
 
       if (mapPositive.contains(item)) {
         mapPositive(item).merge(vertex)
@@ -265,6 +276,7 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     }
 
     this.count += otherRanker.count
+    this.trainStats.merge(otherRanker.trainStats)
     this
   }
 
@@ -324,7 +336,8 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
               val lastVertex = mapNegative.getOrElse(lastTag, Vertex("morph", lastTag))
               val score = headVertex.positive(lastVertex, "Negative")
               score == 0.0
-            }}.map { case (headTag, lastTag) => {
+            }
+            }.map { case (headTag, lastTag) => {
               val headVertex = mapPositive.getOrElse(headTag, Vertex("morph", headTag))
               val lastVertex = mapPositive.getOrElse(lastTag, Vertex("morph", lastTag))
               val score = headVertex.positive(lastVertex, linkName)

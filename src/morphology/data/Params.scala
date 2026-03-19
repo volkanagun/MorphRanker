@@ -3,6 +3,7 @@ package morphology.data
 import java.util.Locale
 
 class Params() {
+
   var locale = new Locale("tr")
   var model = "gmm"
   var seed = 17
@@ -11,7 +12,7 @@ class Params() {
   val modelFolder = "resources/models/"
   val tokenizerFilename = "resources/binary/dictionary.bin"
   var maxSentenceLength = 200
-  var maxSentences = 10000
+  var maxSentences = 1000
   var maxFeatures = 10000
   var maxLabels = 5000
   var maxRankIters = 3
@@ -20,6 +21,7 @@ class Params() {
   var maxLabelWindow = 20
   var forwardBackward = true
 
+  var vocabSize = 500
   var hiddenSize = 100
   var nHeads = 4
   var batchSize = 64
@@ -32,8 +34,6 @@ class Params() {
   val kDimArray = Array(10, 20, 50, 100, 200, 500)
   var tagSamples = 10000
   val minSampleArray = Array(/*1000, 5000, 10000, 30000,*/ 100000)
-
-
 
   val tokenSplit = ">>>"
 
@@ -50,14 +50,14 @@ class Params() {
   val test2016Filename = "resources/morphology/trmor2016.test";
   val test2018Filename = "resources/morphology/trmor2018.gold";
 
-  val testFilenames = Array(/*test2006Filename, test2016Filename*/test2018Filename)
+  val testFilenames = Array(test2006Filename, test2016Filename,test2018Filename)
   val vocabFilenames = Array(test2006Filename, test2016Filename, test2018Filename)
 
   val wordSkipOrder = Array[Int](1, 2, 3, 4, 5, 6, 7)
   var ambiguityThreshold = Array(1 ,5, 10, 50, 100, 5000, 1000)
   var prunningRatios = Array(1.0, 0.5, 0.25, 0.05, 0.01)
   var maxSentenceArray = Array(1000)
-  var maxWindowArray = Array(4, 6, 9)
+  var maxWindowArray = Array(4, 6, 9).reverse
   var maxSliceArray = Array(1, 2, 3, 4, 5)
   var skipHeadArray = Array(1, 3)
 
@@ -68,10 +68,11 @@ class Params() {
   val oneMillion = 1000000
   val aHundred = 100000
   var skipHeadAmbiguity = 2
-  var maxPairAmbiguity = 6
-  var maxSentenceAmbiguity = 1
+  var maxPairAmbiguity = 100
+  var maxSentenceAmbiguity = 50000000000d
   var maxSliceNgram = 1
-  var maxEpocs = 100
+  var maxEpocs = 1000
+  var maxIterations = 10
   var maxNeuralEpocs = 1
   var trainStats = new DataStats()
 
@@ -79,14 +80,14 @@ class Params() {
     (if (i >= 7) "Very-Distant" else if (i >= 5) "Long-Distant" else if (i >= 2) "Distant" else if (i >= 1) "Neighbour" else "Local")
   }
 
- /* def linkMarker(i: Int): String = {
-    val str = (if (i >= 6) "Long-Distant" else if (i >= 3) "Distant" else if (i >= 1) "Neighbour" else "Local")
-    str
-  }*/
-
   def modelID(): Int = {
-    val items = Array[Int](model.hashCode, maxLabelWindow, skipHeadAmbiguity, kDims, kThreshold.hashCode(), tagSamples, maxSentences * maxEpocs, maxSliceNgram, maxTokenWindow, maxPairAmbiguity, maxSentenceAmbiguity, droupoutFreq, prunningRatio.hashCode()) ++
+    val items = Array[Int](model.hashCode, maxLabelWindow, skipHeadAmbiguity, kDims, kThreshold.hashCode(), tagSamples,
+      maxSentences * maxEpocs,
+      maxSliceNgram, maxTokenWindow, maxPairAmbiguity,
+      maxSentenceAmbiguity.hashCode(), droupoutFreq,
+      prunningRatio.hashCode()) ++
       ambiguityThreshold
+
     items.foldRight[Int](seed) { case (i, main) => {
       i + 7 * main
     }}
@@ -101,6 +102,10 @@ class Params() {
 
   def rankModelFilename(): String = {
     modelFolder + "rank-" + modelID() + ".bin"
+  }
+  
+  def nmfModelFilename(): String = {
+    modelFolder + "nmf-" + modelID() + ".bin"
   }
 
   def neuralModelFilename(): String = {

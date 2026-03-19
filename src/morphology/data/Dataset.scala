@@ -5,7 +5,7 @@ import morphology.morph.{MorphAnalyzer, Tokenizer}
 import java.io.{File, PrintWriter}
 import java.text.BreakIterator
 import java.util.Locale
-import scala.collection.parallel.CollectionConverters.{ArrayIsParallelizable, ImmutableIterableIsParallelizable}
+import scala.collection.parallel.CollectionConverters.{ArrayIsParallelizable, ImmutableSeqIsParallelizable}
 import scala.io.Source
 
 object Dataset {
@@ -339,7 +339,7 @@ object Dataset {
         nonAmbiguousSelecting(ambiguousLabelSet, trainFilename, sliceSize, startIndex, searchSize)
       }).toArray.foreach(newLabelMap=>{
         newLabelMap.foreach { case (label, array) => {
-          mergeLabelMap = mergeLabelMap.updated(label, mergeLabelMap.getOrElse(label, Array()) ++ array)
+          mergeLabelMap = mergeLabelMap.updated(label, mergeLabelMap.getOrElse(label, Array[Sentence]()) ++ array)
         }}
       })
 
