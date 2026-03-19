@@ -179,6 +179,26 @@ class MorphRanker(params: Params) extends MorphPredictor(params) {
     rankMorpheme
   }
 
+  def infer(sentenceLine:String):Option[String] = {
+    val sentence = Dataset.parseSentence(sentenceLine)
+    val analysis = sentence.words.map(word => word.toRankWord(params.maxSliceNgram))
+    val voteMap = infer(analysis)
+    var resultLine = ""
+
+    if (voteMap.size < sentence.length()) {
+      None
+    }
+    else{
+      for (i <- 0 until sentence.length()) {
+        val array = voteMap(i)
+        val analysis = array.head.analysis
+        resultLine += " " + analysis
+      }
+      Some(resultLine.trim)
+    }
+
+  }
+
   def infer(results: Array[RankWord]): Map[Int, Array[RankMorpheme]] = {
     val items = results.map(_.suffixation())
     var voteMap = (0 until items.length).map(i => (i -> Seq[RankMorpheme]())).toMap

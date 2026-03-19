@@ -4,7 +4,7 @@ case class Sentence(id: Int, var text: String, var words: Array[Word] = Array())
 
   def adjust(): this.type = {
     val wordStart = Word(0, "START", Array("START+START"))
-    val wordEnd = Word(words.length + 1, "END", Array("END+END"))
+    val wordEnd = Word(words.length, "END", Array("END+END"))
 
     words = wordStart +: words
     words = words :+ wordEnd

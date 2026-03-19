@@ -16,7 +16,8 @@ object Dataset {
 
   def parseSentence(sentenceLine: String): Sentence = {
     val tokens = tokenizer.standardTokenizer(sentenceLine)
-    val words = analyzer.parseSkip(tokens).zip(tokens).zipWithIndex.map { case ((analysis, token), index) => {
+    val analyses = analyzer.parseSkip(tokens)
+    val words = analyses.zip(tokens).zipWithIndex.map { case ((analysis, token), index) => {
       Word(index, token, analysis)
     }
     }
